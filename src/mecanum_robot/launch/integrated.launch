@@ -1,0 +1,27 @@
+<launch>
+    <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <param name="video_device" value="/dev/video3" />
+        <param name="image_width" value="640" />
+        <param name="image_height" value="480" />
+    </node>
+
+    <node pkg="mecanum_robot" type="integrated_follower_node.py" name="integrated_follower_node" output="screen">
+        
+        <param name="target_object" type="string" value="kepala_tombak" />
+        <param name="image_width" type="int" value="640" />
+        <param name="stop_area" type="int" value="66000" /> 
+        <param name="linear_speed" type="double" value="-0.1" />
+        
+        <param name="kp_angular" type="double" value="0.003" />
+        <param name="ki_angular" type="double" value="0.0001" />
+        <param name="kp_linear" type="double" value="0.00005" />
+        <param name="center_offset_x" type="double" value="0.0" /> 
+        
+        <param name="approach_target_dist" type="double" value="15.0" />
+        
+        <param name="approach_speed" type="double" value="-0.1" />
+        
+        <param name="kp_approach_linear" type="double" value="0.05" />
+        
+    </node>
+</launch>

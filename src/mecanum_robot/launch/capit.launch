@@ -1,0 +1,14 @@
+<launch>
+
+    <node name="base_controller" pkg="mecanum_robot" type="base_control_setpoint_node.py" output="screen">
+    </node>
+    <node name="capit_controller" pkg="mecanum_robot" type="capit_controller.py" output="screen">
+    </node>
+    <node name="point" pkg="mecanum_robot" type="point_node.py" output="screen">
+    </node>
+    
+
+
+    <!-- <node name="teleop_twist_keyboard" pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py" output="screen" launch-prefix="xterm -e">
+    </node> -->
+</launch>

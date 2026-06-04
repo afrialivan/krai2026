@@ -1,0 +1,29 @@
+<launch>
+    <!-- Node Kamera USB -->
+    <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <param name="video_device" value="/dev/video3" />
+        <param name="image_width" value="640" />
+        <param name="image_height" value="480" />
+    </node>
+
+    <!-- Node Deteksi dan Follower YOLO -->
+    <node pkg="mecanum_robot" type="object_detection_node.py" name="yolo_follower_node" output="screen">
+        
+        <param name="target_object" type="string" value="kepala_tombak" />
+        <param name="linear_speed" type="double" value="-0.25" />
+        <param name="stop_area" type="int" value="86000" /> 
+        <param name="image_width" type="int" value="640" />
+        <param name="center_offset_x" type="double" value="0.0" /> 
+        
+        <!-- ========================================== -->
+        <!-- TUNING KONTROL PI UNTUK BELOK (ANGULAR)      -->
+        <!-- ========================================== -->
+        <!-- P: Merespons error spontan (gunakan nilai positif karena sudah difix) -->
+        <param name="kp_angular" type="double" value="0.006" />
+        
+        <!-- I: Mengoreksi error kecil yang tersisa agar tepat di tengah -->
+        <!-- Jika robot mulai berjalan bergelombang/zig-zag, kecilkan nilai ini -->
+        <param name="ki_angular" type="double" value="0.004" />
+        
+    </node>
+</launch>
