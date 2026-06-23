@@ -12,7 +12,7 @@ class YoloDetector:
     def __init__(self):
         rospy.init_node('yolo_detector_node')
 
-        self.model = YOLO('/home/prall/krai_ws/src/mecanum_robot/scripts/best.pt')
+        self.model = YOLO('/home/prall/krai_ws/src/mecanum_robot/models/best.pt')
         self.bridge = CvBridge()
 
         # Publisher data deteksi (JSON)

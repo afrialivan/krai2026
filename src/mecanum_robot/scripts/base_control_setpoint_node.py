@@ -13,8 +13,8 @@ class BaseController:
     def __init__(self):
         rospy.init_node('base_controller_node')
 
-        # --- Variabel Status Capit (DITAMBAHKAN) ---
-        self.capit_state = 0.0  # Nilai default capit (0.0 = terbuka/mati)
+        # --- Variabel Status Capit ---
+        self.capit_state = 0.0 
 
         # Koneksi Serial
         try:
@@ -24,95 +24,56 @@ class BaseController:
 
         # Publisher
         self.yaw_pub = rospy.Publisher('/robot_yaw', Float32, queue_size=10)
-        # Publisher baru untuk data motor (RPM dan Encoder)
         self.feedback_pub = rospy.Publisher('/motor_feedback', Float32MultiArray, queue_size=10)
 
         # Subscriber
         rospy.Subscriber("cmd_vel", Twist, self.cmd_cb)
-        
-        # Subscriber BARU untuk menerima perintah capit (DITAMBAHKAN)
         rospy.Subscriber("/capit_cmd", Float32, self.capit_cb)
         self.last_cmd_time = rospy.get_time()
 
-        # Timer untuk Watchdog (Stop motor jika kehilangan sinyal)
         rospy.Timer(rospy.Duration(0.1), self.update_system)
 
-        # Thread untuk membaca feedback dari serial secara asinkron
         self.read_thread = threading.Thread(target=self.read_from_serial)
         self.read_thread.daemon = True
         self.read_thread.start()
 
-    # ==================================================
-    # CALLBACK CAPIT (DITAMBAHKAN)
-    # ==================================================
     def capit_cb(self, msg):
-        # Update nilai capit dari node capit_controller
         self.capit_state = msg.data
-        rospy.loginfo(self.capit_state)
+        rospy.loginfo(f"Capit State: {self.capit_state}")
 
-    # ==================================================
-    # BACA DATA DARI ESP32 (FEEDBACK)
-    # ==================================================
     def read_from_serial(self):
         while not rospy.is_shutdown():
             if self.ser.in_waiting > 0:
                 try:
                     line = self.ser.readline().decode('utf-8').strip()
-                    
-                    # Cek apakah line diawali dengan prefix FEEDBACK:
                     if line.startswith("FEEDBACK:"):
-                        # Hapus prefix dan pecah berdasarkan koma
                         clean_data = line.replace("FEEDBACK:", "").split(',')
-                        
-                        # Konversi string ke float
-                        # Urutan: rpmFL, rpmFR, rpmRL, rpmRR, countFL, countFR, countRL, countRR
                         data_floats = [float(x) for x in clean_data]
                         
-                        # Publish ke topik ROS
                         msg = Float32MultiArray()
                         msg.data = data_floats
                         self.feedback_pub.publish(msg)
-                        
                 except Exception as e:
                     rospy.logwarn(f"Error parsing serial data: {e}")
 
     # ==================================================
-    # CALLBACK CMD_VEL
+    # CALLBACK CMD_VEL (PERBAIKAN KINEMATIKA MECANUM)
     # ==================================================
     def cmd_cb(self, msg):
         self.last_cmd_time = rospy.get_time()
 
-        x = msg.linear.x
-        y = msg.linear.y
-        z = msg.angular.z
+        x = msg.linear.x    # Maju (+) / Mundur (-)
+        y = msg.linear.y    # Geser Kiri (+) / Geser Kanan (-)
+        z = msg.angular.z   # Putar Kiri (+) / Putar Kanan (-)
 
-        fl =  0
-        fr =  0
-        rl = 0
-        rr = 0
+        fl = x - y - z  # Front Left
+        fr = x + y + z  # Front Right
+        rl = x + y - z  # Rear Left
+        rr = x - y + z  # Rear Right
         
-        # tl = 0
-        # tr = 0
-
-        # # KINEMATIKA MECANUM
-        fl = x - y - z
-        fr = x + y + z
-        rl = x - y - z
-        rr = x + y + z
+        tl = x
+        tr = x
         
-        # tl = x - y - z
-        # tr = x + y + z
-        
-        # fl =  x
-        # fr =  x
-        # rl = x
-        # rr = x
-        
-        tl =  x
-        tr =  x
-        
-
-        # KONVERSI KE SETPOINT RPM
         max_rpm = 120.0
         fl_sp = fl * max_rpm
         fr_sp = fr * max_rpm
@@ -120,36 +81,26 @@ class BaseController:
         rr_sp = rr * max_rpm
 
         max_pwm = 255.0
-        tl_sp = 0
-        tr_sp = 0
         tl_sp = tl * max_pwm
         tr_sp = tr * max_pwm
         
-        # Mengganti hardcode '1' dengan state dari capit_cmd (DITAMBAHKAN)
         proxyCapit = self.capit_state 
         data2 = 255.0
         data3 = 255.0
         data4 = 255.0
-        # self.send_setpoint(fl_sp, fr_sp, rl_sp, rr_sp, tl_sp, tr_sp, proxyCapit, data2, data3, data4)
-        # self.send_setpoint(fl_sp, fr_sp, rl_sp, rr_sp, 200, 200, proxyCapit, data2, data3, data4)
+        
+        # self.send_setpoint(fl_sp, fr_sp, rl_sp, rr_sp, -tl_sp, -tr_sp, proxyCapit, data2, data3, data4)
+        # self.send_setpoint(fl_sp, fr_sp, rl_sp, rr_sp, -255, -255, proxyCapit, data2, data3, data4)
         self.send_setpoint(fl_sp, fr_sp, rl_sp, rr_sp, 0, 0, proxyCapit, data2, data3, data4)
+        # self.send_setpoint(fl_sp, fr_sp, rl_sp, rr_sp, 0, 0, 1, data2, data3, data4)
+        # self.send_setpoint(fl_sp, 0, 0, 0, 0, 0, proxyCapit, data2, data3, data4)
 
-    # ==================================================
-    # KIRIM DATA KE ESP32
-    # ==================================================
     def send_setpoint(self, fl, fr, rl, rr, tl, tr, data1, data2, data3, data4):
-        # Gunakan format 1 angka di belakang koma untuk efisiensi buffer serial
-        data = f"{fl:.1f},{fr:.1f},{rl:.1f},{rr:.1f},{tl:.1f},{tr:.1f}, {data1}, {data2}, {data3}, {data4}\n"
+        data = f"{fl:.1f},{fr:.1f},{rl:.1f},{rr:.1f},{tl:.1f},{tr:.1f},{data1:.1f},{data2:.1f},{data3:.1f},{data4:.1f}\n"
         self.ser.write(data.encode())
 
-    # ==================================================
-    # WATCHDOG
-    # ==================================================
     def update_system(self, event):
-        rospy.loginfo(self.capit_state)
-        # Jika tidak ada cmd_vel masuk selama 0.5 detik, stop robot
         if rospy.get_time() - self.last_cmd_time > 0.5:
-            # PENTING: Gunakan self.capit_state agar capit tidak mati saat roda stop (DITAMBAHKAN)
             self.send_setpoint(0, 0, 0, 0, 0, 0, self.capit_state, 0, 0, 0)
 
 

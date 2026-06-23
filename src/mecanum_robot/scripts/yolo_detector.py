@@ -11,7 +11,7 @@ class YoloAutonomous:
     def __init__(self):
         rospy.init_node('yolo_detector_node')
        
-        self.model = YOLO('/home/prall/krai_ws/src/mecanum_robot/scripts/best.pt')
+        self.model = YOLO('/home/prall/krai_ws/src/mecanum_robot/scripts/models/best.pt')
         self.bridge = CvBridge()
         
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)

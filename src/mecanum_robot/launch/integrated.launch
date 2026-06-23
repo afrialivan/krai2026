@@ -9,17 +9,19 @@
         
         <param name="target_object" type="string" value="kepala_tombak" />
         <param name="image_width" type="int" value="640" />
-        <param name="stop_area" type="int" value="66000" /> 
+        <param name="stop_area" type="int" value="90000" /> 
         <param name="linear_speed" type="double" value="-0.1" />
         
-        <param name="kp_angular" type="double" value="0.003" />
-        <param name="ki_angular" type="double" value="0.0001" />
+
+        <param name="kp_angular" type="double" value="0.002" />
+        <param name="ki_angular" type="double" value="0.00005" />
+        <!-- <param name="kp_linear" type="double" value="0.00002" /> -->
         <param name="kp_linear" type="double" value="0.00005" />
-        <param name="center_offset_x" type="double" value="0.0" /> 
+        <param name="center_offset_x" type="double" value="-18.0" /> 
         
-        <param name="approach_target_dist" type="double" value="15.0" />
+        <param name="approach_target_dist" type="double" value="29.0" />
         
-        <param name="approach_speed" type="double" value="-0.1" />
+        <param name="approach_speed" type="double" value="-0.04" />
         
         <param name="kp_approach_linear" type="double" value="0.05" />
         

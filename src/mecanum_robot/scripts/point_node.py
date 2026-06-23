@@ -46,13 +46,22 @@ IDX_RIGHT           = 2         # index motor kanan
 #   move  -> value dalam cm, speed = cmd_vel linear.x
 #   turn  -> value dalam derajat, speed = cmd_vel angular.z maksimum
 WAYPOINTS = [
-    {"action": "move",  "value":  91.0, "speed":  -.6},
-    {"action": "move",  "value": 91.0, "speed":  .6},
-    # {"action": "turn",  "value":   12.0, "speed":  1}, # mines kanan
+    {"action": "move",  "value": 100.0, "speed":  -0.5},
+    {"action": "turn",  "value":   -15, "speed":  0.5}, # mines kanan
+    {"action": "move",  "value": 100.0, "speed":  -0.5},
+    # {"action": "move",  "value": 81.0, "speed":  0.2},
+    # # {"action": "move",  "value": 80.0, "speed":  -0.2},
+    # {"action": "turn",  "value":   -22, "speed":  2}, # mines kanan
+    # {"action": "turn",  "value":   22, "speed":  2}, # mines kanan
+    # {"action": "move",  "value":  50.0, "speed":  -1},
+    # {"action": "move",  "value": 50.0, "speed":  1},
+    # {"action": "turn",  "value":   -24, "speed":  2}, # mines kanan
+    # {"action": "move",  "value":  50.0, "speed":  -1},
     # {"action": "move",  "value":  50.0, "speed":  1},
     # {"action": "turn",  "value":   -12.0, "speed":  1}, # mines kanan
     # {"action": "turn",  "value":  50.0, "speed":  -0.2},
 ]
+# belok => 23 = 180deg 
 
 
 # ==============================================================================

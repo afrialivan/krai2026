@@ -1,0 +1,32 @@
+<launch>
+    <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+        <param name="video_device" value="/dev/video3" />
+        <param name="image_width" value="640" />
+        <param name="image_height" value="480" />
+        <param name="pixel_format" value="yuyv" />
+        <param name="framerate" value="30" />
+    </node>
+
+    <!-- <node name="base_controller_node" pkg="mecanum_robot" type="base_controller.py" output="screen">
+    </node> -->
+
+    <!-- <node name="integrated_follower_node" pkg="mecanum_robot" type="otonom_node.py" output="screen">
+        
+        <param name="target_object" value="botol" />
+        <param name="stop_area" value="66000" />
+        <param name="image_width" value="640" />
+        <param name="center_offset_x" value="0.0" />
+        
+        <param name="kp_angular" value="0.003" />
+        <param name="ki_angular" value="0.0001" />
+        <param name="kp_linear" value="0.00005" />
+        
+        <param name="linear_speed" value="-0.15" /> 
+        
+        <param name="forward_target_dist" value="50.0" /> 
+        
+        <param name="approach_speed" value="0.3" />       
+        
+        <param name="turn_target_deg" value="90.0" />     
+    </node> -->
+</launch>

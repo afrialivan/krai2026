@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+
+import rospy
+import cv2
+import os
+import math
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import Image
+from std_msgs.msg import Float32MultiArray, Float32
+from cv_bridge import CvBridge, CvBridgeError
+from ultralytics import YOLO
+
+class IntegratedFollowerNode:
+    def __init__(self):
+        rospy.init_node('integrated_follower_node', anonymous=True)
+
+        # ==========================================
+        # 1. PARAMETER YOLO & KONTROL KAMERA
+        # ==========================================
+        self.target_object   = rospy.get_param("~target_object", "botol")
+        self.max_linear_spd  = rospy.get_param("~linear_speed", -0.1) 
+        self.stop_area       = rospy.get_param("~stop_area", 66000)
+        self.image_width     = rospy.get_param("~image_width", 640)
+        self.center_offset_x = rospy.get_param("~center_offset_x", 0.0)
+        
+        self.kp_angular      = rospy.get_param("~kp_angular", 0.003)
+        self.ki_angular      = rospy.get_param("~ki_angular", 0.0001)
+        self.kp_linear       = rospy.get_param("~kp_linear", 0.00005) 
+
+        self.center_x_image   = (self.image_width / 2.0) + self.center_offset_x
+        self.integral_error_x = 0.0
+        self.last_time        = rospy.get_time()
+        self.max_integral     = 500.0
+        self.bridge           = CvBridge()
+
+        # ==========================================
+        # 2. PARAMETER FISIK ROBOT & ODOMETRI
+        # ==========================================
+        self.wheel_diameter  = 9.5  # cm
+        self.wheel_circ      = math.pi * self.wheel_diameter
+        self.track_width     = 80.0 # cm (Jarak antar roda kiri-kanan untuk kalkulasi belok)
+        self.ppr             = 385.0
+        self.linear_scale    = 1.0
+        self.angular_scale   = 0.127 # Faktor koreksi belok dari script waypoint Anda
+        
+        self.prev_counts       = None
+        self.total_distance_cm = 0.0
+        self.encoder_yaw_deg   = 0.0
+
+        # ==========================================
+        # 3. PARAMETER PERGERAKAN DARI LAUNCH
+        # ==========================================
+        # A. Awal: Mundur 10 cm
+        self.init_back_dist      = rospy.get_param("~init_back_dist", 10.0)
+        self.init_back_speed     = rospy.get_param("~init_back_speed", -0.2)
+        
+        # B. Setelah Proxy: Maju 10 cm
+        self.approach_target_dist = rospy.get_param("~approach_target_dist", 10.0) 
+        self.max_approach_spd     = rospy.get_param("~approach_speed", 0.3)        
+        self.kp_approach_linear   = rospy.get_param("~kp_approach_linear", 0.05) 
+        
+        # C. Setelah Maju: Belok 20 cm (Busur Putaran)
+        self.turn_target_dist     = rospy.get_param("~turn_target_dist", 20.0)
+        self.max_turn_spd         = rospy.get_param("~turn_speed", 0.4)
+        self.kp_turn_linear       = rospy.get_param("~kp_turn_linear", 0.05)
+
+        # Variabel tracker koordinat lokal tiap State
+        self.state_start_dist   = 0.0
+        self.state_start_yaw    = 0.0
+        self.odometry_ready     = False
+
+        # ==========================================
+        # 4. STATE MACHINE DIALIRKAN DARI AWAL
+        # ==========================================
+        # Urutan: "START_MUNDUR" -> "FOLLOWING" -> "APPROACHING" -> "TURNING" -> "GRABBING" -> "DONE"
+        self.current_state = "START_MUNDUR" 
+
+        # ==========================================
+        # 5. MUAT MODEL YOLO TERLEBIH DAHULU
+        # ==========================================
+        package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        model_path = os.path.join(package_path, 'models', 'best.pt')
+        rospy.loginfo(f"Memuat Model YOLO dari: {model_path}")
+        try:
+            self.model = YOLO(model_path)
+            rospy.loginfo("Model YOLO berhasil dimuat. Menyiapkan komunikasi ROS...")
+        except Exception as e:
+            rospy.logerr(f"Gagal memuat model! Error: {e}")
+            rospy.signal_shutdown("Model YOLO tidak ditemukan.")
+            return
+
+        # ==========================================
+        # 6. SETUP ROS PUBLISHER & SUBSCRIBER
+        # ==========================================
+        self.cmd_pub   = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.capit_pub = rospy.Publisher('/capit_cmd', Float32, queue_size=10)
+        
+        rospy.Subscriber('/motor_feedback', Float32MultiArray, self.feedback_cb)
+        rospy.Subscriber('/usb_cam/image_raw', Image, self.image_callback)
+        rospy.loginfo("Node berjalan penuh. Memulai sekuens gerak...")
+
+    def feedback_cb(self, msg):
+        if len(msg.data) < 9:
+            return
+
+        counts = {'L': msg.data[1], 'R': msg.data[2]}
+        proximity = msg.data[8]
+
+        if self.prev_counts is None:
+            self.prev_counts = counts
+            # Kunci titik awal mutlak saat encoder pertama kali terbaca
+            self.state_start_dist = self.total_distance_cm
+            self.state_start_yaw = self.encoder_yaw_deg
+            self.odometry_ready = True
+            return
+
+        # Hitung Odometri Linear & Angular (Differential Style dari script waypoint Anda)
+        d_tick_L = counts['L'] - self.prev_counts['L']
+        d_tick_R = counts['R'] - self.prev_counts['R']
+        
+        d_cm_L = (d_tick_L / self.ppr) * self.wheel_circ
+        d_cm_R = (d_tick_R / self.ppr) * self.wheel_circ
+
+        # Update akumulasi jarak linear
+        delta_linear = ((d_cm_L + d_cm_R) / 2.0) * self.linear_scale
+        self.total_distance_cm += delta_linear
+
+        # Update akumulasi orientasi sudut
+        delta_yaw_rad = ((d_cm_R - d_cm_L) / self.track_width) * self.angular_scale
+        self.encoder_yaw_deg += math.degrees(delta_yaw_rad)
+
+        self.prev_counts = counts
+
+        # Transisi otomatis dari FOLLOWING ke APPROACHING saat sensor membaca benda (1.0)
+        if self.current_state == "FOLLOWING" and proximity == 1.0:
+            rospy.loginfo("Sensor Proximity Aktif! Menghentikan YOLO, mulai fase APPROACHING (Maju).")
+            self.state_start_dist = self.total_distance_cm
+            self.current_state = "APPROACHING"
+
+    def image_callback(self, data):
+        # Kamera hanya boleh memerintah roda jika robot sedang berada di fase FOLLOWING
+        if self.current_state != "FOLLOWING":
+            return 
+
+        current_time = rospy.get_time()
+        dt = current_time - self.last_time
+        self.last_time = current_time
+        if dt <= 0: dt = 0.03 
+
+        try:
+            frame = self.bridge.imgmsg_to_cv2(data, "bgr8")
+        except CvBridgeError as e:
+            return
+
+        frame = cv2.resize(frame, (self.image_width, int(self.image_width * 0.75)))
+        results = self.model(frame, conf=0.3, verbose=False)
+        target_found = False
+        twist_msg = Twist()
+        
+        for result in results:
+            for box in result.boxes:
+                class_id = int(box.cls[0])
+                if self.model.names[class_id] == self.target_object:
+                    target_found = True
+                    
+                    xyxy = box.xyxy[0].to("cpu").numpy()
+                    xmin, ymin, xmax, ymax = xyxy[0], xyxy[1], xyxy[2], xyxy[3]
+                    
+                    box_center_x = (xmin + xmax) / 2.0
+                    box_area = (xmax - xmin) * (ymax - ymin)
+                    
+                    if box_area < self.stop_area:
+                        remaining_area = self.stop_area - box_area
+                        calculated_speed = remaining_area * self.kp_linear
+                        linear_x = -abs(calculated_speed)
+                        
+                        if linear_x < self.max_linear_spd: linear_x = self.max_linear_spd
+                        if linear_x > -0.04: linear_x = -0.04
+                            
+                        twist_msg.linear.x = linear_x
+                        
+                        error_x = self.center_x_image - box_center_x
+                        self.integral_error_x += (error_x * dt)
+                        
+                        if self.integral_error_x > self.max_integral: self.integral_error_x = self.max_integral
+                        elif self.integral_error_x < -self.max_integral: self.integral_error_x = -self.max_integral
+                        
+                        angular_z = (self.kp_angular * error_x) + (self.ki_angular * self.integral_error_x)
+                        twist_msg.angular.z = angular_z
+                    else:
+                        twist_msg.linear.x = 0.0
+                        twist_msg.angular.z = 0.0
+                        self.integral_error_x = 0.0
+                    break
+            if target_found: break
+
+        if not target_found:
+            self.integral_error_x = 0.0
+
+        self.cmd_pub.publish(twist_msg)
+
+        annotated_frame = results[0].plot()
+        cv2.line(annotated_frame, (int(self.center_x_image), 0), (int(self.center_x_image), annotated_frame.shape[0]), (0, 255, 0), 2)
+        cv2.imshow("Kamera Integrasi", annotated_frame)
+        cv2.waitKey(1)
+
+    def run(self):
+        rate = rospy.Rate(10)
+        
+        # Amankan loop, pastikan callback encoder sudah menyuplai data awal
+        while not rospy.is_shutdown() and not self.odometry_ready:
+            rate.sleep()
+
+        while not rospy.is_shutdown():
+            cmd = Twist()
+
+            # --- STATE 1: MUNDUR DI AWAL 10 CM ---
+            if self.current_state == "START_MUNDUR":
+                dist_moved = abs(self.total_distance_cm - self.state_start_dist)
+                if dist_moved < self.init_back_dist:
+                    cmd.linear.x = self.init_back_speed
+                    self.cmd_pub.publish(cmd)
+                    rospy.loginfo_throttle(0.5, f"[1. Start Mundur] Jarak: {dist_moved:.1f}/{self.init_back_dist} cm")
+                else:
+                    self.cmd_pub.publish(Twist()) # Stop sebentar
+                    rospy.loginfo("Selesai mundur awal. Berpindah ke fase FOLLOWING (Kamera Aktif).")
+                    self.current_state = "FOLLOWING"
+
+            # --- STATE 2: TRACKING KAMERA YOLO ---
+            elif self.current_state == "FOLLOWING":
+                # Kecepatan dipublish penuh oleh fungsi image_callback, loop ini hanya memantau status
+                pass
+
+            # --- STATE 3: MAJU 10 CM (SETELAH PROXY) DENGAN PENGEREMAN HALUS ---
+            elif self.current_state == "APPROACHING":
+                dist_moved = abs(self.total_distance_cm - self.state_start_dist)
+                remaining_dist = self.approach_target_dist - dist_moved
+                
+                if remaining_dist > 0.3:
+                    calculated_spd = remaining_dist * self.kp_approach_linear
+                    # Proteksi pembatasan kecepatan
+                    if calculated_spd > abs(self.max_approach_spd): calculated_spd = abs(self.max_approach_spd)
+                    if calculated_spd < 0.06: calculated_spd = 0.06 # Batas bawah torsi motor
+                    
+                    # Berikan arah sesuai tanda parameter asli di launch
+                    cmd.linear.x = calculated_spd if self.max_approach_spd > 0 else -calculated_spd
+                    self.cmd_pub.publish(cmd)
+                    rospy.loginfo_throttle(0.5, f"[3. Maju Ekstra] Sisa: {remaining_dist:.1f} cm | Speed: {cmd.linear.x:.3f}")
+                else:
+                    self.cmd_pub.publish(Twist())
+                    rospy.loginfo("Selesai maju ekstra. Berpindah ke fase TURNING (Belok).")
+                    # Kunci koordinat untuk persiapan hitungan belok
+                    self.state_start_dist = self.total_distance_cm
+                    self.current_state = "TURNING"
+
+            # --- STATE 4: BELOK 20 CM DENGAN PENGEREMAN HALUS ---
+            elif self.current_state == "TURNING":
+                # Kita hitung jarak busur yang sudah ditempuh roda (menggunakan pergerakan linear kumulatif roda saat pivot/spin)
+                dist_moved = abs(self.total_distance_cm - self.state_start_dist)
+                remaining_dist = self.turn_target_dist - dist_moved
+                
+                if remaining_dist > 0.3:
+                    calculated_turn = remaining_dist * self.kp_turn_linear
+                    if calculated_turn > abs(self.max_turn_spd): calculated_turn = abs(self.max_turn_spd)
+                    if calculated_turn < 0.08: calculated_turn = 0.08 # Torsi minimum putar roda mecanum lebih berat
+                    
+                    # Tentukan arah rotasi (Positif = Kiri, Negatif = Kanan) dari launch parameter
+                    cmd.angular.z = calculated_turn if self.max_turn_spd > 0 else -calculated_turn
+                    self.cmd_pub.publish(cmd)
+                    rospy.loginfo_throttle(0.5, f"[4. Belok Ekstra] Sisa Lintasan Roda: {remaining_dist:.1f} cm | Speed: {cmd.angular.z:.3f}")
+                else:
+                    self.cmd_pub.publish(Twist())
+                    rospy.loginfo("Selesai belok ekstra. Berpindah ke fase GRABBING (Capit).")
+                    self.current_state = "GRABBING"
+
+            # --- STATE 5: PENGIRIMAN SINYAL CAPIT ---
+            elif self.current_state == "GRABBING":
+                cap_msg = Float32()
+                cap_msg.data = 1.0 
+                self.capit_pub.publish(cap_msg)
+                rospy.loginfo("[5. Grabbing] Perintah Capit (1.0) dikirim!")
+                self.current_state = "DONE"
+                
+            # --- STATE 6: SELESAI ---
+            elif self.current_state == "DONE":
+                pass
+                
+            rate.sleep()
+
+if __name__ == '__main__':
+    try:
+        node = IntegratedFollowerNode()
+        node.run()
+    except rospy.ROSInterruptException:
+        pass
+    cv2.destroyAllWindows()

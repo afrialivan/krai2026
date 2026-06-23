@@ -15,15 +15,8 @@
         <param name="image_width" type="int" value="640" />
         <param name="center_offset_x" type="double" value="0.0" /> 
         
-        <!-- ========================================== -->
-        <!-- TUNING KONTROL PI UNTUK BELOK (ANGULAR)      -->
-        <!-- ========================================== -->
-        <!-- P: Merespons error spontan (gunakan nilai positif karena sudah difix) -->
-        <param name="kp_angular" type="double" value="0.006" />
-        
-        <!-- I: Mengoreksi error kecil yang tersisa agar tepat di tengah -->
-        <!-- Jika robot mulai berjalan bergelombang/zig-zag, kecilkan nilai ini -->
-        <param name="ki_angular" type="double" value="0.004" />
+        <param name="kp_angular" type="double" value="0.001" />
+        <param name="ki_angular" type="double" value="0.00001" />
         
     </node>
 </launch>
