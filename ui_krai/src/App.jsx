@@ -1,49 +1,43 @@
 import { useState, useEffect, useRef } from 'react';
 import * as ROSLIB from 'roslib';
+import './App.css';
 
-// ==========================================
-// 1. KOMPONEN KECIL YANG BISA DIPAKAI ULANG (REUSABLE)
-// ==========================================
-
-// Komponen Kotak Indikator Sensor
-function SensorCard({ title, value, unit, color = '#61dafb' }) {
+function SensorCard({ title, value, unit, colorClass = 'text-cyan-400' }) {
   return (
-    <div style={{ backgroundColor: '#282c34', color: color, padding: '15px', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
-      <h4 style={{ color: '#aaa', margin: '0 0 5px 0', fontSize: '14px' }}>{title}</h4>
-      <h2 style={{ margin: 0, fontSize: '24px' }}>{value} <span style={{ fontSize: '14px' }}>{unit}</span></h2>
+    <div className="bg-[#282c34] p-[15px] rounded-lg shadow-md">
+      <h4 className="text-gray-400 m-0 mb-[5px] text-[14px] font-medium">{title}</h4>
+      <h2 className={`m-0 text-2xl font-bold ${colorClass}`}>
+        {value} <span className="text-[14px] font-normal text-gray-300">{unit}</span>
+      </h2>
     </div>
   );
 }
 
-// Komponen Tombol Kontrol
-function ControlButton({ label, onClick, color = '#e0e0e0', textColor = '#000', disabled = false }) {
+// 2. Komponen Tombol Kontrol (Menggunakan Tailwind)
+function ControlButton({ label, onClick, bgClass = 'bg-gray-200 hover:bg-gray-300 text-black', disabled = false }) {
   return (
     <button 
       onClick={onClick} 
       disabled={disabled}
-      style={{
-        padding: '12px', fontSize: '15px', fontWeight: 'bold', cursor: disabled ? 'not-allowed' : 'pointer',
-        border: 'none', borderRadius: '6px', backgroundColor: disabled ? '#cccccc' : color, color: textColor,
-        transition: '0.2s', boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-      }}
+      className={`p-3 text-[15px] font-bold rounded-md transition-all shadow-sm duration-200
+        ${disabled ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : bgClass}`}
     >
       {label}
     </button>
   );
 }
 
-// ==========================================
-// 2. KOMPONEN UTAMA (DASHBOARD)
-// ==========================================
 function App() {
   const [isConnected, setIsConnected] = useState(false);
+  const [capitState, setCapit] = useState(false);
   const rosRef = useRef(null);
 
-  // State Sensor (Mudah ditambah tinggal tambah state baru)
   const [telemetry, setTelemetry] = useState({
-    sensorDepan: '0',
+    sudutRobot: '0',
     sensorKiri: '0',
+    lowLevel: [],
     baterai: '0',
+    capitSenjata: '0',
   });
 
   useEffect(() => {
@@ -54,22 +48,26 @@ function App() {
     ros.on('error', (err) => console.error(err));
     ros.on('close', () => setIsConnected(false));
 
-    // DAFTAR SUBSCRIBER (Sangat rapi dan terkumpul di satu tempat)
-    const subDepan = new ROSLIB.Topic({ ros, name: '/sensor_depan', messageType: 'std_msgs/String' });
+    const subDepan = new ROSLIB.Topic({ ros, name: '/robot_yaw', messageType: 'std_msgs/Float32' });
     const subKiri = new ROSLIB.Topic({ ros, name: '/sensor_kiri', messageType: 'std_msgs/String' });
     const subBaterai = new ROSLIB.Topic({ ros, name: '/baterai', messageType: 'std_msgs/String' });
+    const subLowLevel = new ROSLIB.Topic({ ros, name: '/motor_feedback', messageType: 'std_msgs/Float32MultiArray' });
+    const subCapit = new ROSLIB.Topic({ ros, name: '/capit_cmd', messageType: 'std_msgs/Float32' });
 
-    subDepan.subscribe((msg) => setTelemetry(prev => ({ ...prev, sensorDepan: msg.data })));
+    subDepan.subscribe((msg) => setTelemetry(prev => ({ ...prev, sudutRobot: msg.data })));
     subKiri.subscribe((msg) => setTelemetry(prev => ({ ...prev, sensorKiri: msg.data })));
     subBaterai.subscribe((msg) => setTelemetry(prev => ({ ...prev, baterai: msg.data })));
+    subLowLevel.subscribe((msg) => setTelemetry(prev => ({ ...prev, lowLevel: msg.data })));
+    subCapit.subscribe((msg) => setTelemetry(prev => ({ ...prev, capitSenjata: msg.data })));
 
     return () => {
-      subDepan.unsubscribe(); subKiri.unsubscribe(); subBaterai.unsubscribe();
+      subDepan.unsubscribe(); subKiri.unsubscribe(); subBaterai.unsubscribe(); subLowLevel.unsubscribe(); subCapit.unsubscribe();
       if (rosRef.current) rosRef.current.close();
     };
   }, []);
+  console.log(telemetry.capitSenjata);
+  
 
-  // Fungsi publish global yang sangat clean
   const publishMessage = (topicName, payload) => {
     if (!isConnected || !rosRef.current) return;
     const topic = new ROSLIB.Topic({
@@ -80,38 +78,56 @@ function App() {
     topic.publish({ data: payload });
   };
 
+  const toggleCapit = () => {
+    const newCapitState = !capitState;
+    setCapit(newCapitState);
+    publishMessage('/capit_cmd', newCapitState ? 1 : 0);
+  }
+  
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '700px', margin: '0 auto' }}>
-      <header style={{ textAlign: 'center', marginBottom: '30px' }}>
-        <h2>KRAI Scalable Dashboard</h2>
-        <span style={{ color: isConnected ? 'green' : 'red', fontWeight: 'bold' }}>
+    <div className="p-8 font-sans max-w-[700px] mx-auto text-gray-800">
+      <header className="text-center mb-[30px]">
+        <h2 className="text-4xl font-bold mb-2 text-gray-900">KRAI Scalable Dashboard</h2>
+        <span className={`font-bold ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
           {isConnected ? '🟢 Connected to Robot' : '🔴 Disconnected'}
         </span>
       </header>
 
-      {/* Bagian Monitoring: Tinggal panggil SensorCard */}
-      <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '15px', marginBottom: '30px' }}>
-        <SensorCard title="Sensor Depan" value={telemetry.sensorDepan} unit="cm" />
-        <SensorCard title="Sensor Kiri" value={telemetry.sensorKiri} unit="cm" />
-        <SensorCard title="Daya Baterai" value={telemetry.baterai} unit="%" color="#4CAF50" />
+      {/* Grid Monitoring */}
+      <section className="grid grid-cols-3 gap-[15px] mb-[30px]">
+        <SensorCard title="Sudut Robot" value={telemetry.sudutRobot} unit="deg" />
+        <SensorCard title="Capit" value={telemetry.capitSenjata} unit="" />
+        <SensorCard title="Daya Baterai" value={telemetry.baterai} unit="%" colorClass="text-green-500" />
       </section>
 
-      {/* Bagian Kontrol Roda */}
-      <h3 style={{ borderBottom: '1px solid #ddd', paddingBottom: '5px' }}>🎮 Pergerakan Roda</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '25px' }}>
+      <section className="grid grid-cols-4 gap-[15px] mb-[30px]">
+        <SensorCard title="Kiri Belakang" value={telemetry.lowLevel[1]} unit="" />
+        <SensorCard title="Kiri Depan" value={telemetry.lowLevel[3]} unit="" />
+        <SensorCard title="Kanan Depan" value={telemetry.lowLevel[0]} unit="" />
+        <SensorCard title="Kanan Belakang" value={telemetry.lowLevel[2]} unit="" />
+      </section>
+
+      {/* Kontrol Roda */}
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl text-white font-semibold">Capit</h3>
+      <div className="grid grid-cols-3 gap-2.5 mb-6">
+        <ControlButton label="Capit" bgClass={`${!capitState ? 'bg-green-500' : 'bg-gray-500'} hover:bg-green-600 text-white`} onClick={() => toggleCapit()} disabled={!isConnected} />
+      </div>
+      {/* Kontrol Roda */}
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl text-white font-semibold">🎮 Pergerakan Roda</h3>
+      <div className="grid grid-cols-3 gap-2.5 mb-6">
         <div/>
-        <ControlButton label="MAJU" color="#4CAF50" textColor="white" onClick={() => publishMessage('/perintah_gerak', 'Maju')} disabled={!isConnected} />
+        <ControlButton label="MAJU" bgClass="bg-green-500 hover:bg-green-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Maju')} disabled={!isConnected} />
         <div/>
-        <ControlButton label="KIRI" color="#2196F3" textColor="white" onClick={() => publishMessage('/perintah_gerak', 'Kiri')} disabled={!isConnected} />
-        <ControlButton label="STOP" color="#f44336" textColor="white" onClick={() => publishMessage('/perintah_gerak', 'Stop')} disabled={!isConnected} />
-        <ControlButton label="KANAN" color="#2196F3" textColor="white" onClick={() => publishMessage('/perintah_gerak', 'Kanan')} disabled={!isConnected} />
+        <ControlButton label="KIRI" bgClass="bg-blue-500 hover:bg-blue-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Kiri')} disabled={!isConnected} />
+        <ControlButton label="STOP" bgClass="bg-red-500 hover:bg-red-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Stop')} disabled={!isConnected} />
+        <ControlButton label="KANAN" bgClass="bg-blue-500 hover:bg-blue-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Kanan')} disabled={!isConnected} />
       </div>
 
-      {/* Bagian Mekanisme/Sistem */}
-      <h3 style={{ borderBottom: '1px solid #ddd', paddingBottom: '5px' }}>⚙️ Mekanisme Robot</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-        <ControlButton label="Reset System" onClick={() => publishMessage('/mode_robot', 'Reset')} disabled={!isConnected} />
-        <ControlButton label="🔥 Tembak Cincin" color="#FF9800" textColor="white" onClick={() => publishMessage('/kontrol_aktuator', 'Tembak')} disabled={!isConnected} />
+      {/* Mekanisme/Sistem */}
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">⚙️ Mekanisme Robot</h3>
+      <div className="grid grid-cols-2 gap-2.5">
+        <ControlButton label="Reset System" bgClass="bg-gray-600 hover:bg-gray-700 text-white" onClick={() => publishMessage('/mode_robot', 'Reset')} disabled={!isConnected} />
+        <ControlButton label="Yoo" bgClass="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publishMessage('/kontrol_aktuator', 'Tembak')} disabled={!isConnected} />
       </div>
     </div>
   );
