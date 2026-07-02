@@ -1,0 +1,12 @@
+<launch>
+
+    <!-- <node pkg="mecanum_robot" type="base_control_setpoint_node.py" name="base_control_setpoint_node" output="screen"> -->
+    <node pkg="mecanum_robot" type="base_mpu_node.py" name="base_control_setpoint_node" output="screen">
+        </node>
+
+    <node pkg="mecanum_robot" type="sensor_node.py" name="sensor_node" output="screen">
+        <param name="port" value="/dev/ttyUSB1" />
+        <param name="topic" value="/sensor" />
+    </node>
+
+</launch>

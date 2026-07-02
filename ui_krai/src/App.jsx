@@ -13,13 +13,16 @@ function SensorCard({ title, value, unit, colorClass = 'text-cyan-400' }) {
   );
 }
 
-// 2. Komponen Tombol Kontrol (Menggunakan Tailwind)
-function ControlButton({ label, onClick, bgClass = 'bg-gray-200 hover:bg-gray-300 text-black', disabled = false }) {
+// Komponen tombol di-upgrade untuk mendukung event tahan (Pointer Down/Up/Leave)
+function ControlButton({ label, onClick, onPointerDown, onPointerUp, onPointerLeave, bgClass = 'bg-gray-200 hover:bg-gray-300 text-black', disabled = false }) {
   return (
     <button 
       onClick={onClick} 
-      disabled={disabled}
-      className={`p-3 text-[15px] font-bold rounded-md transition-all shadow-sm duration-200
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerLeave={onPointerLeave}
+      // Tambahan 'touch-none' agar layar tidak ikut tergeser (scroll) saat ditahan di HP
+      className={`p-3 text-[15px] font-bold rounded-md transition-all shadow-sm duration-200 touch-none
         ${disabled ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : bgClass}`}
     >
       {label}
@@ -31,6 +34,9 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [capitState, setCapit] = useState(false);
   const rosRef = useRef(null);
+  
+  // Referensi untuk menyimpan loop pengiriman data (spam)
+  const intervalRef = useRef(null); 
 
   const [telemetry, setTelemetry] = useState({
     sudutRobot: '0',
@@ -38,6 +44,7 @@ function App() {
     lowLevel: [],
     baterai: '0',
     capitSenjata: '0',
+    sensor: []
   });
 
   useEffect(() => {
@@ -52,6 +59,7 @@ function App() {
     const subKiri = new ROSLIB.Topic({ ros, name: '/sensor_kiri', messageType: 'std_msgs/String' });
     const subBaterai = new ROSLIB.Topic({ ros, name: '/baterai', messageType: 'std_msgs/String' });
     const subLowLevel = new ROSLIB.Topic({ ros, name: '/motor_feedback', messageType: 'std_msgs/Float32MultiArray' });
+    const subSensor = new ROSLIB.Topic({ ros, name: '/sensor', messageType: 'std_msgs/Float32MultiArray' });
     const subCapit = new ROSLIB.Topic({ ros, name: '/capit_cmd', messageType: 'std_msgs/Float32' });
 
     subDepan.subscribe((msg) => setTelemetry(prev => ({ ...prev, sudutRobot: msg.data })));
@@ -59,75 +67,150 @@ function App() {
     subBaterai.subscribe((msg) => setTelemetry(prev => ({ ...prev, baterai: msg.data })));
     subLowLevel.subscribe((msg) => setTelemetry(prev => ({ ...prev, lowLevel: msg.data })));
     subCapit.subscribe((msg) => setTelemetry(prev => ({ ...prev, capitSenjata: msg.data })));
+    subSensor.subscribe((msg) => setTelemetry(prev => ({ ...prev, sensor: msg.data })));
 
     return () => {
-      subDepan.unsubscribe(); subKiri.unsubscribe(); subBaterai.unsubscribe(); subLowLevel.unsubscribe(); subCapit.unsubscribe();
+      subDepan.unsubscribe(); subKiri.unsubscribe(); subBaterai.unsubscribe(); subLowLevel.unsubscribe(); subCapit.unsubscribe(); subSensor.unsubscribe();
       if (rosRef.current) rosRef.current.close();
+      if (intervalRef.current) clearInterval(intervalRef.current); // Bersihkan interval saat keluar
     };
   }, []);
-  console.log(telemetry.capitSenjata);
   
-
-  const publishMessage = (topicName, payload) => {
+  const publishMessage = (topicName, messageType, payload) => {
     if (!isConnected || !rosRef.current) return;
     const topic = new ROSLIB.Topic({
       ros: rosRef.current,
       name: topicName,
-      messageType: 'std_msgs/String'
+      messageType: messageType
     });
-    topic.publish({ data: payload });
+    
+    const msg = typeof payload === 'object' ? payload : { data: payload };
+    topic.publish(msg);
+  };
+
+  // Logika baru untuk menahan tombol (Loop 10Hz)
+  const startMoving = (linearX, linearY, angularZ) => {
+    if (!isConnected) return;
+    
+    // Hentikan interval lama jika tiba-tiba terpencet tombol lain
+    if (intervalRef.current) clearInterval(intervalRef.current);
+
+    const sendMsg = () => {
+      const twistMsg = {
+        linear: { x: linearX, y: linearY, z: 0.0 },
+        angular: { x: 0.0, y: 0.0, z: angularZ }
+      };
+      publishMessage('/cmd_vel', 'geometry_msgs/Twist', twistMsg);
+    };
+
+    sendMsg(); // Tembak 1 kali agar instan merespon
+    intervalRef.current = setInterval(sendMsg, 100); // Lanjutkan setiap 100ms
+  };
+
+  // Logika untuk berhenti saat tombol dilepas
+  const stopMoving = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    const twistMsg = {
+      linear: { x: 0.0, y: 0.0, z: 0.0 },
+      angular: { x: 0.0, y: 0.0, z: 0.0 }
+    };
+    publishMessage('/cmd_vel', 'geometry_msgs/Twist', twistMsg);
   };
 
   const toggleCapit = () => {
     const newCapitState = !capitState;
     setCapit(newCapitState);
-    publishMessage('/capit_cmd', newCapitState ? 1 : 0);
+    publishMessage('/capit_cmd', 'std_msgs/Float32', newCapitState ? 1 : 0);
+  }
+
+  const stopClimb = () => {
+    publishMessage('/motor_climb', 'std_msgs/Float32', 0);
+    publishMessage('/climb', 'std_msgs/Float32', 0);
   }
   
   return (
     <div className="p-8 font-sans max-w-[700px] mx-auto text-gray-800">
       <header className="text-center mb-[30px]">
-        <h2 className="text-4xl font-bold mb-2 text-gray-900">KRAI Scalable Dashboard</h2>
+        <h2 className="text-4xl font-bold mb-2 text-gray-900">Tobarania Dashboard</h2>
         <span className={`font-bold ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
           {isConnected ? '🟢 Connected to Robot' : '🔴 Disconnected'}
         </span>
       </header>
 
       {/* Grid Monitoring */}
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">Ultrasonik</h3>
+      <section className="grid grid-cols-3 gap-[15px]">
+        {/* <SensorCard title="Depan Bawah" value={telemetry.sensor[0].toFixed(2)} unit="" colorClass="text-green-500" /> */}
+        <SensorCard title="Kanan" value={parseFloat(telemetry.sensor[7]).toFixed(2)} unit="" colorClass="text-green-500" />
+        <SensorCard title="Depan Bawah" value={parseFloat(telemetry.sensor[0]).toFixed(2)} unit="" colorClass="text-green-500" />
+        <SensorCard title="Depan Atas" value={parseFloat(telemetry.sensor[9]).toFixed(2)} unit="" colorClass="text-green-500" />
+      </section>
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">Ultrasonik</h3>
+
       <section className="grid grid-cols-3 gap-[15px] mb-[30px]">
-        <SensorCard title="Sudut Robot" value={telemetry.sudutRobot} unit="deg" />
-        <SensorCard title="Capit" value={telemetry.capitSenjata} unit="" />
-        <SensorCard title="Daya Baterai" value={telemetry.baterai} unit="%" colorClass="text-green-500" />
+        <SensorCard title="Capit" value={parseFloat(telemetry.capitSenjata).toFixed(2)} unit="" />
+        <SensorCard title="Proxy Capit" value={parseFloat(telemetry.sensor[1]).toFixed(2)} unit="" colorClass="text-green-500" />
+        <SensorCard title="Proxy Manjat" value={parseFloat(telemetry.sensor[6]).toFixed(2)} unit="" colorClass="text-green-500" />
+      </section>
+      
+      <section className="grid grid-cols-2 gap-[15px] mb-[30px]">
+        <SensorCard title="Sudut Robot" value={parseFloat(telemetry.sudutRobot).toFixed(2)} unit="deg" />
+        <SensorCard title="Cahaya" value={parseFloat(telemetry.sensor[2]).toFixed(2)} unit="" colorClass="text-green-500" />
       </section>
 
       <section className="grid grid-cols-4 gap-[15px] mb-[30px]">
-        <SensorCard title="Kiri Belakang" value={telemetry.lowLevel[1]} unit="" />
-        <SensorCard title="Kiri Depan" value={telemetry.lowLevel[3]} unit="" />
-        <SensorCard title="Kanan Depan" value={telemetry.lowLevel[0]} unit="" />
-        <SensorCard title="Kanan Belakang" value={telemetry.lowLevel[2]} unit="" />
+        <SensorCard title="Kiri Belakang" value={parseFloat(telemetry.lowLevel[1]).toFixed(2)} unit="" />
+        <SensorCard title="Kiri Depan" value={parseFloat(telemetry.lowLevel[3]).toFixed(2)} unit="" />
+        <SensorCard title="Kanan Depan" value={parseFloat(telemetry.lowLevel[0]).toFixed(2)} unit="" />
+        <SensorCard title="Kanan Belakang" value={parseFloat(telemetry.lowLevel[2]).toFixed(2)} unit="" />
       </section>
 
-      {/* Kontrol Roda */}
-      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl text-white font-semibold">Capit</h3>
+      {/* Capit */}
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">Capit</h3>
       <div className="grid grid-cols-3 gap-2.5 mb-6">
-        <ControlButton label="Capit" bgClass={`${!capitState ? 'bg-green-500' : 'bg-gray-500'} hover:bg-green-600 text-white`} onClick={() => toggleCapit()} disabled={!isConnected} />
-      </div>
-      {/* Kontrol Roda */}
-      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl text-white font-semibold">🎮 Pergerakan Roda</h3>
-      <div className="grid grid-cols-3 gap-2.5 mb-6">
-        <div/>
-        <ControlButton label="MAJU" bgClass="bg-green-500 hover:bg-green-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Maju')} disabled={!isConnected} />
-        <div/>
-        <ControlButton label="KIRI" bgClass="bg-blue-500 hover:bg-blue-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Kiri')} disabled={!isConnected} />
-        <ControlButton label="STOP" bgClass="bg-red-500 hover:bg-red-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Stop')} disabled={!isConnected} />
-        <ControlButton label="KANAN" bgClass="bg-blue-500 hover:bg-blue-600 text-white" onClick={() => publishMessage('/perintah_gerak', 'Kanan')} disabled={!isConnected} />
+        <ControlButton label="Capit / Lepas" bgClass={`${!capitState ? 'bg-green-500' : 'bg-gray-500'} hover:bg-green-600 text-white`} onClick={() => toggleCapit()} disabled={!isConnected} />
       </div>
 
-      {/* Mekanisme/Sistem */}
-      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">⚙️ Mekanisme Robot</h3>
-      <div className="grid grid-cols-2 gap-2.5">
-        <ControlButton label="Reset System" bgClass="bg-gray-600 hover:bg-gray-700 text-white" onClick={() => publishMessage('/mode_robot', 'Reset')} disabled={!isConnected} />
-        <ControlButton label="Yoo" bgClass="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publishMessage('/kontrol_aktuator', 'Tembak')} disabled={!isConnected} />
+      {/* Kontrol KRAI cmd_vel */}
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">Pergerakan Robot</h3>
+      
+      {/* Tombol Maju / Serong */}
+      <div className="grid grid-cols-3 gap-2.5 mb-3">
+        <ControlButton label="↖️ SERONG KIRI" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(0.5, 0.5, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+        <ControlButton label="▲ MAJU" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(0.5, 0, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+        <ControlButton label="SERONG KANAN ↗️" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(0.5, -0.5, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+      </div>
+      
+      {/* Tombol Geser / Stop */}
+      <div className="grid grid-cols-3 gap-2.5 mb-3">
+        <ControlButton label="◀ GESER KIRI" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(0, 1.0, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+        <ControlButton label="🛑 STOP (Manual)" bgClass="bg-red-600 hover:bg-red-700 text-white shadow-md border border-red-800" onClick={stopMoving} disabled={!isConnected} />
+        <ControlButton label="GESER KANAN ▶" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(0, -1.0, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+      </div>
+      
+      {/* Tombol Mundur / Serong Mundur */}
+      <div className="grid grid-cols-3 gap-2.5 mb-3">
+        <ControlButton label="↙️ MUNDUR KIRI" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(-0.5, 0.5, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+        <ControlButton label="▼ MUNDUR" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(-0.5, 0, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+        <ControlButton label="MUNDUR KANAN ↘️" bgClass="bg-cyan-600 hover:bg-cyan-700 text-white" onPointerDown={() => startMoving(-0.5, -0.5, 0)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+      </div>
+
+      {/* Tombol Rotasi */}
+      <div className="grid grid-cols-2 gap-2.5 mb-6 mt-4">
+        <ControlButton label="PUTAR KIRI (CCW)" bgClass="bg-indigo-500 hover:bg-indigo-600 text-white" onPointerDown={() => startMoving(0, 0, 0.5)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+        <ControlButton label="PUTAR KANAN (CW)" bgClass="bg-indigo-500 hover:bg-indigo-600 text-white" onPointerDown={() => startMoving(0, 0, -0.5)} onPointerUp={stopMoving} onPointerLeave={stopMoving} disabled={!isConnected} />
+      </div>
+
+      <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">MEIHUA</h3>
+      <div className="grid grid-cols-2 gap-2.5 mb-3">
+        {/* Menggunakan onPointerDown dan onPointerUp agar Climb juga bersifat "tahan-untuk-gerak" */}
+        <ControlButton label="MAJU" bgClass="bg-green-500 hover:bg-green-600 text-white" onPointerDown={() => publishMessage('/motor_climb', 'std_msgs/Float32', 2)} onPointerUp={stopClimb} onPointerLeave={stopClimb} disabled={!isConnected} />
+        <ControlButton label="MUNDUR" bgClass="bg-green-500 hover:bg-green-600 text-white" onPointerDown={() => publishMessage('/motor_climb', 'std_msgs/Float32', 1)} onPointerUp={stopClimb} onPointerLeave={stopClimb} disabled={!isConnected} />
+        <ControlButton label="ANGKAT" bgClass="bg-blue-500 hover:bg-blue-600 text-white" onPointerDown={() => publishMessage('/climb', 'std_msgs/Float32', 2)} onPointerUp={stopClimb} onPointerLeave={stopClimb} disabled={!isConnected} />
+        <ControlButton label="TURUNKAN" bgClass="bg-blue-500 hover:bg-blue-600 text-white" onPointerDown={() => publishMessage('/climb', 'std_msgs/Float32', 1)} onPointerUp={stopClimb} onPointerLeave={stopClimb} disabled={!isConnected} />
       </div>
     </div>
   );

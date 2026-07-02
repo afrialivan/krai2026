@@ -99,7 +99,7 @@ class WaypointNavigator:
     # ==========================================================================
 
     def _feedback_cb(self, msg: Float32MultiArray):
-        """Update odometri dari data encoder ESP32."""
+        """Update odometri dari data encoder ESP32 dengan Spike Filter."""
         if len(msg.data) <= max(IDX_LEFT, IDX_RIGHT):
             rospy.logwarn_throttle(5.0,
                 f"[Navigator] Data encoder kurang. "
@@ -122,6 +122,20 @@ class WaypointNavigator:
         d_tick_L = counts['L'] - self.prev_counts['L']
         d_tick_R = counts['R'] - self.prev_counts['R']
 
+        # =========================================================
+        # [FILTER BARU] SPIKE REJECTION & WATCHDOG RESET
+        # =========================================================
+        # RPM Maksimal robotmu ~120 RPM. Pada 10Hz, maksimal tick 
+        # per iterasi seharusnya tidak lebih dari ~80-100 tick.
+        # Jika > 500 tick, ini dipastikan noise atau ESP32 restart.
+        if abs(d_tick_L) > 500 or abs(d_tick_R) > 500:
+            rospy.logwarn(f"[Navigator] ⚠️ GLITCH ODOMETRI TERDETEKSI! "
+                          f"Loncatan: dL={d_tick_L:.0f}, dR={d_tick_R:.0f}. Data diabaikan.")
+            # Update prev_counts ke nilai baru agar iterasi selanjutnya normal
+            self.prev_counts = counts 
+            return 
+        # =========================================================
+
         # Konversi tick -> cm
         d_cm_L = (d_tick_L / PPR) * self.wheel_circumference
         d_cm_R = (d_tick_R / PPR) * self.wheel_circumference
@@ -135,11 +149,6 @@ class WaypointNavigator:
         self.encoder_yaw_deg += math.degrees(delta_yaw_rad)
 
         self.prev_counts = counts
-
-    # ==========================================================================
-    # NAVIGASI WAYPOINT
-    # ==========================================================================
-
     def _start_waypoint(self, wp: dict):
         """Catat titik referensi saat waypoint baru dimulai."""
         self.wp_start_distance  = self.total_distance_cm
