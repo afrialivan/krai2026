@@ -16,9 +16,11 @@ class RobotState(Enum):
     CLIMB = 7
     MOTOR_CLIMB = 8            
     CLIMB_2 = 9                
-    MAJU_SEBELUM_PUTAR = 10      # Status baru: Maju 2 detik
+    MAJU_SEBELUM_PUTAR = 10      
     PUTAR_KANAN_90 = 11          
-    WAIT_FOR_INSTRUCTIONS = 12
+    GESER_KIRI_SEBENTAR = 12     # Status baru: Geser Kiri 0.1s
+    MUNDUR = 13                  
+    WAIT_FOR_INSTRUCTIONS = 14
 
 class RobotController:
     def __init__(self):
@@ -32,27 +34,31 @@ class RobotController:
         self.target_maksimal_manjat = 3   
 
         # --- KONFIGURASI PARAMETER GERAK ---
-        self.target_depan_bawah_1 = 40.0 + 5.0
+        self.target_depan_bawah_1 = 35.0 + 5.0
         self.toleransi_bawah = 0.5
-        self.target_depan_atas = 50.0  
-        self.waktu_tunda_kanan = rospy.Duration(1.2) 
-        self.target_depan_bawah_2 = 6.0 
+        self.target_depan_atas = 30.0  
+        self.waktu_tunda_kanan = rospy.Duration(0.8) 
+        self.target_depan_bawah_2 = 10.0 
 
         self.waktu_motor_climb = rospy.Duration(2.0)  
         self.waktu_climb_2 = rospy.Duration(8.0)      
         self.waktu_jeda_sejenak = rospy.Duration(1.5) 
-        self.waktu_maju_sebelum_putar = rospy.Duration(0.7) # Durasi maju sebelum putar
+        self.waktu_maju_sebelum_putar = rospy.Duration(0.8) 
+        self.waktu_geser_kiri = rospy.Duration(0.5)     # Durasi geser kiri
         
-        self.vel_maju_start = 0.7
-        self.vel_maju = 0.7
-        self.vel_kanan = -2.5
-        self.vel_putar = -1  
-        self.target_sudut = 170.0 
+        self.vel_maju_start = 0.5
+        self.vel_maju = 0.5
+        self.vel_mundur = -0.4  
+        self.vel_kanan = -1.0
+        self.vel_kiri = 0.5      # Kecepatan kiri (Y Positif)
+        self.vel_putar = -0.6   
+        self.target_sudut = 180.0 - 15 
 
         # --- VARIABEL SENSOR ---
         self.jarak_depan_bawah = None
         self.jarak_depan_atas = None
         self.sensor_climb_stop = None
+        self.sensor_index_8 = None  
         
         self.current_yaw = None
         self.last_yaw_tracking = None
@@ -72,6 +78,7 @@ class RobotController:
         if len(msg.data) >= 10:
             self.jarak_depan_bawah = msg.data[0]
             self.sensor_climb_stop = msg.data[6]  
+            self.sensor_index_8 = msg.data[8]     
             self.jarak_depan_atas = msg.data[9]
         else:
             rospy.logwarn_throttle(2, "Data array sensor kurang dari 10 index!")
@@ -95,7 +102,7 @@ class RobotController:
 
     def run(self):
         while not rospy.is_shutdown():
-            if self.jarak_depan_bawah is None or self.jarak_depan_atas is None or self.sensor_climb_stop is None or self.current_yaw is None:
+            if self.jarak_depan_bawah is None or self.jarak_depan_atas is None or self.sensor_climb_stop is None or self.current_yaw is None or self.sensor_index_8 is None:
                 rospy.loginfo_throttle(2, "Menunggu data dari topik sensor dan robot_yaw...")
                 self.rate.sleep()
                 continue
@@ -203,26 +210,22 @@ class RobotController:
                         rospy.loginfo(f"=== Siklus Manjat {self.jumlah_siklus_manjat} dari {self.target_maksimal_manjat} selesai! MENGULANG KEMBALI KE MAJU_2. ===")
                         self.state = RobotState.MAJU_2
                     else:
-                        # SETELAH 3 KALI MANJAT, LANJUT KE MAJU 2 DETIK
                         rospy.loginfo("=== SELURUH 3 SIKLUS MANJAT SELESAI. Maju selama 2 detik sebelum rotasi. ===")
                         self.state_start_time = rospy.Time.now()
                         self.state = RobotState.MAJU_SEBELUM_PUTAR
 
-            # 10. MAJU 2 DETIK SEBELUM PUTAR
             elif self.state == RobotState.MAJU_SEBELUM_PUTAR:
-                cmd.linear.x = self.vel_maju_start  # Bisa diganti self.vel_maju jika ingin lebih pelan
+                cmd.linear.x = self.vel_maju_start 
                 cmd.linear.y = 0.0
                 cmd.angular.z = 0.0
                 
                 elapsed_time = rospy.Time.now() - self.state_start_time
                 if elapsed_time >= self.waktu_maju_sebelum_putar:
-                    rospy.loginfo("Maju 2 detik selesai. Memulai Rotasi 90 Derajat ke Kanan.")
-                    # Persiapan tracking sudut sebelum masuk ke state putar
+                    rospy.loginfo("Maju selesai. Memulai Rotasi ke Kanan.")
                     self.accumulated_yaw = 0.0
                     self.last_yaw_tracking = self.current_yaw
                     self.state = RobotState.PUTAR_KANAN_90
 
-            # 11. ROTASI 90 DERAJAT KE KANAN
             elif self.state == RobotState.PUTAR_KANAN_90:
                 cmd.linear.x = 0.0
                 cmd.linear.y = 0.0
@@ -237,10 +240,32 @@ class RobotController:
                 self.last_yaw_tracking = self.current_yaw
                 
                 if abs(self.accumulated_yaw) >= self.target_sudut:
-                    rospy.loginfo(f"Rotasi 90 derajat selesai (Total pergeseran terbaca: {abs(self.accumulated_yaw):.2f} derajat). Beralih ke standby.")
+                    rospy.loginfo(f"Rotasi selesai (Total pergeseran: {abs(self.accumulated_yaw):.2f} derajat). Memulai GESER KIRI.")
+                    self.state_start_time = rospy.Time.now()
+                    self.state = RobotState.GESER_KIRI_SEBENTAR
+
+            # 12. GESER KIRI 0.1 DETIK
+            elif self.state == RobotState.GESER_KIRI_SEBENTAR:
+                cmd.linear.x = 0.0
+                cmd.linear.y = self.vel_kiri
+                cmd.angular.z = 0.0
+                
+                elapsed_time = rospy.Time.now() - self.state_start_time
+                if elapsed_time >= self.waktu_geser_kiri:
+                    rospy.loginfo("Geser kiri selesai. Memulai MUNDUR.")
+                    self.state = RobotState.MUNDUR
+
+            # 13. MUNDUR SAMPAI SENSOR INDEX 8 = 1
+            elif self.state == RobotState.MUNDUR:
+                cmd.linear.x = self.vel_mundur
+                cmd.linear.y = 0.0
+                cmd.angular.z = 0.0
+                
+                if abs(self.sensor_index_8 - 1.0) < 0.01 or (0.0 < self.sensor_index_8 <= 1.0):
+                    rospy.loginfo(f"Sensor index 8 mendeteksi angka 1 ({self.sensor_index_8}). Robot berhenti.")
                     self.state = RobotState.WAIT_FOR_INSTRUCTIONS
 
-            # 12. DIAM MENUNGGU ARAHAN SELANJUTNYA
+            # 14. DIAM MENUNGGU ARAHAN SELANJUTNYA
             elif self.state == RobotState.WAIT_FOR_INSTRUCTIONS:
                 cmd.linear.x = 0.0
                 cmd.linear.y = 0.0

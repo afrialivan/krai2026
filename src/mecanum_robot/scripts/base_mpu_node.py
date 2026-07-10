@@ -25,8 +25,8 @@ class BaseController:
         
         # Variabel PID
         self.Kp = 0.05
-        self.Ki = 0.003
-        self.Kd = 0.025
+        self.Ki = 0.0001
+        self.Kd = 0.015
         self.integral = 0.0
         self.prev_error = 0.0
 

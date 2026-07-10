@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+roslaunch mecanum_robot main_robot.launch#!/usr/bin/env python3
 
 import rospy
 import serial #type: ignore

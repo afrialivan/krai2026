@@ -142,28 +142,30 @@ function App() {
 
       {/* Grid Monitoring */}
       <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">Ultrasonik</h3>
-      <section className="grid grid-cols-3 gap-[15px]">
+      <section className="grid grid-cols-4 gap-[15px]">
         {/* <SensorCard title="Depan Bawah" value={telemetry.sensor[0].toFixed(2)} unit="" colorClass="text-green-500" /> */}
         <SensorCard title="Kanan" value={parseFloat(telemetry.sensor[7]).toFixed(2)} unit="" colorClass="text-green-500" />
         <SensorCard title="Depan Bawah" value={parseFloat(telemetry.sensor[0]).toFixed(2)} unit="" colorClass="text-green-500" />
         <SensorCard title="Depan Atas" value={parseFloat(telemetry.sensor[9]).toFixed(2)} unit="" colorClass="text-green-500" />
+        <SensorCard title="Kiri" value={parseFloat(telemetry.sensor[10]).toFixed(2)} unit="" colorClass="text-green-500" />
       </section>
       <h3 className="border-b border-gray-300 pb-1 mb-4 text-xl font-semibold">Ultrasonik</h3>
 
-      <section className="grid grid-cols-3 gap-[15px] mb-[30px]">
+      <section className="grid grid-cols-4 gap-[15px] mb-[30px]">
         <SensorCard title="Capit" value={parseFloat(telemetry.capitSenjata).toFixed(2)} unit="" />
         <SensorCard title="Proxy Capit" value={parseFloat(telemetry.sensor[1]).toFixed(2)} unit="" colorClass="text-green-500" />
-        <SensorCard title="Proxy Manjat" value={parseFloat(telemetry.sensor[6]).toFixed(2)} unit="" colorClass="text-green-500" />
+        <SensorCard title="Proxy Turun" value={parseFloat(telemetry.sensor[6]).toFixed(2)} unit="" colorClass="text-green-500" />
+        <SensorCard title="Proxy Lifter" value={parseFloat(telemetry.sensor[8]).toFixed(2)} unit="" colorClass="text-green-500" />
       </section>
       
       <section className="grid grid-cols-2 gap-[15px] mb-[30px]">
-        <SensorCard title="Sudut Robot" value={parseFloat(telemetry.sudutRobot).toFixed(2)} unit="deg" />
+        <SensorCard title="Sudut Robot" value={parseFloat(telemetry.sensor[3]).toFixed(2)} unit="deg" />
         <SensorCard title="Cahaya" value={parseFloat(telemetry.sensor[2]).toFixed(2)} unit="" colorClass="text-green-500" />
       </section>
 
       <section className="grid grid-cols-4 gap-[15px] mb-[30px]">
-        <SensorCard title="Kiri Belakang" value={parseFloat(telemetry.lowLevel[1]).toFixed(2)} unit="" />
-        <SensorCard title="Kiri Depan" value={parseFloat(telemetry.lowLevel[3]).toFixed(2)} unit="" />
+        <SensorCard title="Kiri Belakang" value={parseFloat(telemetry.lowLevel[3]).toFixed(2)} unit="" />
+        <SensorCard title="Kiri Depan" value={parseFloat(telemetry.lowLevel[1]).toFixed(2)} unit="" />
         <SensorCard title="Kanan Depan" value={parseFloat(telemetry.lowLevel[0]).toFixed(2)} unit="" />
         <SensorCard title="Kanan Belakang" value={parseFloat(telemetry.lowLevel[2]).toFixed(2)} unit="" />
       </section>

@@ -18,7 +18,7 @@ class HolonomicRobot:
         
         self.distance = 999.0 
         self.prox_state = 1    
-        self.trigger_distance = 17.0
+        self.trigger_distance = 35.0
         
         self.state = 'NORMAL'
         self.action_start_time = 0.0
@@ -28,7 +28,7 @@ class HolonomicRobot:
 
     def sensor_callback(self, msg):
         if len(msg.data) >= 2:
-            raw_dist = msg.data[7]
+            raw_dist = msg.data[10]
             self.prox_state = msg.data[1]
             
             if raw_dist <= 0:
@@ -53,7 +53,7 @@ class HolonomicRobot:
                 
                 else:
                     self.vel_msg.linear.x = 0.0
-                    self.vel_msg.linear.y = 2.9  # Kiri
+                    self.vel_msg.linear.y = 1.0  # Kiri
                     self.vel_msg.angular.z = 0.0
                     self.cmd_pub.publish(self.vel_msg)
 
@@ -106,7 +106,7 @@ class HolonomicRobot:
                 
                 elapsed_time = rospy.get_time() - self.action_start_time
                 
-                if elapsed_time >= 0.8: 
+                if elapsed_time >= 0.3: 
                     # Hentikan robot untuk mencapit
                     self.vel_msg.linear.x = 0.0
                     self.vel_msg.linear.y = 0.0
