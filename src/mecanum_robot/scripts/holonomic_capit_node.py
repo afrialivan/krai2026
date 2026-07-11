@@ -18,15 +18,22 @@ class HolonomicRobot:
         
         self.distance = 999.0 
         self.prox_state = 1    
-        self.trigger_distance = 20.0
+        self.trigger_distance = 29.0
         
-        # --- Parameter Ramp & Rem ---
+        # --- Parameter Ramp Maju (Berbasis Jarak) ---
         self.max_forward_speed = 0.3
         self.min_forward_speed = 0.12
         
-        self.brake_duration = 0.15      # Waktu rem (detik). Sesuaikan dengan berat robot agar tidak kebablasan mundur.
-        self.brake_multiplier = 1.0     # 1.0 berarti tenaga rem sama dengan tenaga gerak terakhir.
-        self.brake_vel = Twist()        # Variabel untuk menampung kecepatan rem
+        # --- Parameter Ramp Kiri/Kanan (Berbasis Waktu) ---
+        self.target_y = 0.0
+        # Jika loop 50Hz, step 0.02 berarti butuh 1 detik penuh untuk mencapai kecepatan 1.0 (50 x 0.02 = 1.0)
+        # Anda bisa membesarkan angka ini (misal 0.04) jika akselerasinya dirasa terlalu lambat
+        self.y_accel_step = 0.02 
+        
+        # --- Parameter Rem (Braking) ---
+        self.brake_duration = 0.15      
+        self.brake_multiplier = 1.0     
+        self.brake_vel = Twist()        
         self.next_state_after_brake = ''
         
         self.state = 'NORMAL'
@@ -45,7 +52,13 @@ class HolonomicRobot:
             else:
                 self.distance = raw_dist
 
-    # Fungsi baru untuk memicu pengereman sebelum masuk state berikutnya
+    # Fungsi untuk membuat akselerasi y lebih halus
+    def update_y_ramp(self):
+        if self.vel_msg.linear.y < self.target_y:
+            self.vel_msg.linear.y = min(self.vel_msg.linear.y + self.y_accel_step, self.target_y)
+        elif self.vel_msg.linear.y > self.target_y:
+            self.vel_msg.linear.y = max(self.vel_msg.linear.y - self.y_accel_step, self.target_y)
+
     def apply_brake(self, target_state, log_msg="Mengerem untuk mencegah slip..."):
         rospy.loginfo(log_msg)
         self.next_state_after_brake = target_state
@@ -56,6 +69,9 @@ class HolonomicRobot:
         self.brake_vel.linear.x = -self.vel_msg.linear.x * self.brake_multiplier
         self.brake_vel.linear.y = -self.vel_msg.linear.y * self.brake_multiplier
         self.brake_vel.angular.z = -self.vel_msg.angular.z * self.brake_multiplier
+        
+        # Reset target_y agar tidak berkonflik saat selesai mengerem
+        self.target_y = 0.0 
 
     def run(self):
         while not rospy.is_shutdown():
@@ -64,15 +80,12 @@ class HolonomicRobot:
             if self.state == 'BRAKING':
                 self.cmd_pub.publish(self.brake_vel)
                 
-                # Jika waktu ngerem sudah habis
                 if (rospy.get_time() - self.action_start_time) >= self.brake_duration:
-                    # Nolkan kecepatan sepenuhnya
                     self.vel_msg.linear.x = 0.0
                     self.vel_msg.linear.y = 0.0
                     self.vel_msg.angular.z = 0.0
                     self.cmd_pub.publish(self.vel_msg)
                     
-                    # Lanjut ke state tujuan dan reset timer untuk state tersebut
                     self.state = self.next_state_after_brake
                     self.action_start_time = rospy.get_time()
                     
@@ -86,13 +99,13 @@ class HolonomicRobot:
                 
                 else:
                     self.vel_msg.linear.x = 0.0
-                    self.vel_msg.linear.y = 0.4  # Kiri
+                    self.target_y = 0.4  # Set target ke kiri
+                    self.update_y_ramp() # Terapkan akselerasi halus
                     self.vel_msg.angular.z = 0.0
                     self.cmd_pub.publish(self.vel_msg)
 
             # --- STATE 2: JEDA SEBELUM MAJU ---
             elif self.state == 'PAUSE_BEFORE_FORWARD':
-                # Kecepatan sudah dinolkan oleh state BRAKING
                 if (rospy.get_time() - self.action_start_time) >= self.pause_duration:
                     self.state = 'FORWARD_STATE'
                     rospy.loginfo("Jeda selesai. Lanjut MAJU dengan RAMP.")
@@ -110,7 +123,8 @@ class HolonomicRobot:
                     ramp_speed = max(self.min_forward_speed, min(self.max_forward_speed, calc_speed))
                     
                     self.vel_msg.linear.x = ramp_speed
-                    self.vel_msg.linear.y = 0.0
+                    self.target_y = 0.0
+                    self.update_y_ramp() 
                     self.vel_msg.angular.z = 0.0
                     self.cmd_pub.publish(self.vel_msg)
 
@@ -124,13 +138,13 @@ class HolonomicRobot:
             # --- STATE 5: URUTAN CAPIT ---
             elif self.state == 'CAPIT_SEQUENCE':
                 self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = 0.2 # Manuver kiri
+                self.target_y = 0.5  # Set target manuver kiri
+                self.update_y_ramp() # Terapkan akselerasi halus
                 self.vel_msg.angular.z = 0.0
                 self.cmd_pub.publish(self.vel_msg)
                 
                 elapsed_time = rospy.get_time() - self.action_start_time
-                if elapsed_time >= 1.0: 
-                    # Rem sebelum betul-betul menjepit
+                if elapsed_time >= 0.9: 
                     self.apply_brake('SEND_CAPIT_CMD', "Rem manuver capit.")
 
             # --- STATE 5.1: KIRIM COMMAND CAPIT ---
@@ -153,7 +167,8 @@ class HolonomicRobot:
             # --- STATE 7: BERGERAK KANAN (3 DETIK) ---
             elif self.state == 'MOVE_RIGHT_SEQUENCE':
                 self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = -1.0 # Kanan
+                self.target_y = -1.0 # Set target manuver kanan
+                self.update_y_ramp() # Terapkan akselerasi halus
                 self.vel_msg.angular.z = 0.0
                 self.cmd_pub.publish(self.vel_msg)
                 
@@ -163,8 +178,9 @@ class HolonomicRobot:
             # --- STATE 8: BERPUTAR KANAN (3 DETIK) ---
             elif self.state == 'ROTATE_RIGHT_SEQUENCE':
                 self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = 0.0
-                self.vel_msg.angular.z = -0.5 # Berputar
+                self.target_y = 0.0 
+                self.update_y_ramp()
+                self.vel_msg.angular.z = -0.5 
                 self.cmd_pub.publish(self.vel_msg)
                 
                 if (rospy.get_time() - self.action_start_time) >= 3.0:
@@ -172,7 +188,6 @@ class HolonomicRobot:
 
             # --- STATE 9: SELESAI ---
             elif self.state == 'FINISHED':
-                # Kecepatan sudah aman 0 karena melewati state BRAKING
                 pass
             
             self.rate.sleep()
