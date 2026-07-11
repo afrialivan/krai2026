@@ -18,13 +18,22 @@ class HolonomicRobot:
         
         self.distance = 999.0 
         self.prox_state = 1    
-        self.trigger_distance = 35.0
+        self.trigger_distance = 20.0
+        
+        # --- Parameter Ramp & Rem ---
+        self.max_forward_speed = 0.3
+        self.min_forward_speed = 0.12
+        
+        self.brake_duration = 0.15      # Waktu rem (detik). Sesuaikan dengan berat robot agar tidak kebablasan mundur.
+        self.brake_multiplier = 1.0     # 1.0 berarti tenaga rem sama dengan tenaga gerak terakhir.
+        self.brake_vel = Twist()        # Variabel untuk menampung kecepatan rem
+        self.next_state_after_brake = ''
         
         self.state = 'NORMAL'
         self.action_start_time = 0.0
         
-        self.pause_duration = 0.2 # Waktu berhenti sebelum ganti arah
-        self.capit_wait = 3.0     # Waktu tunggu agar capit benar-benar menutup sebelum bergerak
+        self.pause_duration = 0.2
+        self.capit_wait = 3.0
 
     def sensor_callback(self, msg):
         if len(msg.data) >= 2:
@@ -36,134 +45,135 @@ class HolonomicRobot:
             else:
                 self.distance = raw_dist
 
+    # Fungsi baru untuk memicu pengereman sebelum masuk state berikutnya
+    def apply_brake(self, target_state, log_msg="Mengerem untuk mencegah slip..."):
+        rospy.loginfo(log_msg)
+        self.next_state_after_brake = target_state
+        self.state = 'BRAKING'
+        self.action_start_time = rospy.get_time()
+        
+        # Simpan kecepatan dengan arah berlawanan
+        self.brake_vel.linear.x = -self.vel_msg.linear.x * self.brake_multiplier
+        self.brake_vel.linear.y = -self.vel_msg.linear.y * self.brake_multiplier
+        self.brake_vel.angular.z = -self.vel_msg.angular.z * self.brake_multiplier
+
     def run(self):
         while not rospy.is_shutdown():
             
-            # --- STATE 1: NORMAL (Jalan ke Kiri Terus) ---
-            if self.state == 'NORMAL':
-                if self.prox_state == 0:
-                    self.state = 'PAUSE_BEFORE_CAPIT'
+            # --- STATE 0: BRAKING (REM SEKEJAP) ---
+            if self.state == 'BRAKING':
+                self.cmd_pub.publish(self.brake_vel)
+                
+                # Jika waktu ngerem sudah habis
+                if (rospy.get_time() - self.action_start_time) >= self.brake_duration:
+                    # Nolkan kecepatan sepenuhnya
+                    self.vel_msg.linear.x = 0.0
+                    self.vel_msg.linear.y = 0.0
+                    self.vel_msg.angular.z = 0.0
+                    self.cmd_pub.publish(self.vel_msg)
+                    
+                    # Lanjut ke state tujuan dan reset timer untuk state tersebut
+                    self.state = self.next_state_after_brake
                     self.action_start_time = rospy.get_time()
-                    rospy.loginfo("Proximity aktif! Berhenti menetralkan momentum...")
+                    
+            # --- STATE 1: NORMAL (Jalan ke Kiri Terus) ---
+            elif self.state == 'NORMAL':
+                if self.prox_state == 0:
+                    self.apply_brake('PAUSE_BEFORE_CAPIT', "Proximity aktif! Rem sejenak sebelum Capit.")
                 
                 elif 0 < self.distance <= self.trigger_distance:
-                    self.state = 'PAUSE_BEFORE_FORWARD'
-                    self.action_start_time = rospy.get_time()
-                    rospy.loginfo(f"Ultrasonik deteksi {self.distance:.1f}cm! Berhenti sebentar...")
+                    self.apply_brake('PAUSE_BEFORE_FORWARD', f"Ultrasonik {self.distance:.1f}cm! Rem sebelum Maju.")
                 
                 else:
                     self.vel_msg.linear.x = 0.0
-                    self.vel_msg.linear.y = 1.0  # Kiri
+                    self.vel_msg.linear.y = 0.4  # Kiri
                     self.vel_msg.angular.z = 0.0
                     self.cmd_pub.publish(self.vel_msg)
 
             # --- STATE 2: JEDA SEBELUM MAJU ---
             elif self.state == 'PAUSE_BEFORE_FORWARD':
-                self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = 0.0
-                self.vel_msg.angular.z = 0.0
-                self.cmd_pub.publish(self.vel_msg)
-                
+                # Kecepatan sudah dinolkan oleh state BRAKING
                 if (rospy.get_time() - self.action_start_time) >= self.pause_duration:
                     self.state = 'FORWARD_STATE'
-                    rospy.loginfo("Jeda selesai. Lanjut MAJU.")
+                    rospy.loginfo("Jeda selesai. Lanjut MAJU dengan RAMP.")
 
-            # --- STATE 3: MAJU (Ultrasonik) ---
+            # --- STATE 3: MAJU DENGAN RAMP (Ultrasonik) ---
             elif self.state == 'FORWARD_STATE':
                 if self.prox_state == 0:
-                    self.state = 'PAUSE_BEFORE_CAPIT'
-                    self.action_start_time = rospy.get_time()
-                    rospy.loginfo("Proximity aktif saat maju! Berhenti menetralkan momentum...")
+                    self.apply_brake('PAUSE_BEFORE_CAPIT', "Proximity aktif saat maju! Ngerem mundur...")
                 
                 elif self.distance > self.trigger_distance:
-                    self.state = 'NORMAL'
-                    rospy.loginfo("Rintangan hilang. Kembali jalan NORMAL (kiri).")
+                    self.apply_brake('NORMAL', "Rintangan hilang. Rem sebelum kembali ke pergerakan Kiri.")
                 
                 else:
-                    self.vel_msg.linear.x = 0.3  # Maju
+                    calc_speed = (self.distance / self.trigger_distance) * self.max_forward_speed
+                    ramp_speed = max(self.min_forward_speed, min(self.max_forward_speed, calc_speed))
+                    
+                    self.vel_msg.linear.x = ramp_speed
                     self.vel_msg.linear.y = 0.0
                     self.vel_msg.angular.z = 0.0
                     self.cmd_pub.publish(self.vel_msg)
 
             # --- STATE 4: JEDA SEBELUM CAPIT ---
             elif self.state == 'PAUSE_BEFORE_CAPIT':
-                self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = 0.0
-                self.vel_msg.angular.z = 0.0
-                self.cmd_pub.publish(self.vel_msg)
-                
                 if (rospy.get_time() - self.action_start_time) >= self.pause_duration:
                     self.state = 'CAPIT_SEQUENCE'
                     self.action_start_time = rospy.get_time()
-                    rospy.loginfo("Jeda selesai. Mulai urutan pergerakan capit (Kiri 0.8 detik).")
+                    rospy.loginfo("Mulai manuver penyelarasan Capit (Kiri 0.8 detik).")
 
             # --- STATE 5: URUTAN CAPIT ---
             elif self.state == 'CAPIT_SEQUENCE':
                 self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = 2.0 # Manuver kiri
+                self.vel_msg.linear.y = 0.2 # Manuver kiri
                 self.vel_msg.angular.z = 0.0
                 self.cmd_pub.publish(self.vel_msg)
                 
                 elapsed_time = rospy.get_time() - self.action_start_time
-                
-                if elapsed_time >= 0.3: 
-                    # Hentikan robot untuk mencapit
-                    self.vel_msg.linear.x = 0.0
-                    self.vel_msg.linear.y = 0.0
-                    self.vel_msg.angular.z = 0.0
-                    self.cmd_pub.publish(self.vel_msg)
-                    
-                    # Kirim perintah capit
-                    cmd_msg = Float32()
-                    cmd_msg.data = 1.0
-                    self.capit_pub.publish(cmd_msg)
-                    rospy.loginfo("Perintah capit dikirim. Menunggu capit menutup rapat...")
-                    
-                    # Pindah ke state jeda setelah capit
-                    self.state = 'PAUSE_AFTER_CAPIT'
-                    self.action_start_time = rospy.get_time()
+                if elapsed_time >= 1.0: 
+                    # Rem sebelum betul-betul menjepit
+                    self.apply_brake('SEND_CAPIT_CMD', "Rem manuver capit.")
 
-            # --- STATE 6: JEDA SETELAH CAPIT (MENUNGGU CAPIT MENUTUP) ---
-            elif self.state == 'PAUSE_AFTER_CAPIT':
-                self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = 0.0
-                self.vel_msg.angular.z = 0.0
-                self.cmd_pub.publish(self.vel_msg)
+            # --- STATE 5.1: KIRIM COMMAND CAPIT ---
+            elif self.state == 'SEND_CAPIT_CMD':
+                cmd_msg = Float32()
+                cmd_msg.data = 1.0
+                self.capit_pub.publish(cmd_msg)
+                rospy.loginfo("Perintah capit dikirim. Menunggu capit menutup rapat...")
                 
-                if (rospy.get_time() - self.action_start_time) >= self.capit_wait: # Tunggu 1 detik
+                self.state = 'PAUSE_AFTER_CAPIT'
+                self.action_start_time = rospy.get_time()
+
+            # --- STATE 6: JEDA SETELAH CAPIT ---
+            elif self.state == 'PAUSE_AFTER_CAPIT':
+                if (rospy.get_time() - self.action_start_time) >= self.capit_wait:
                     self.state = 'MOVE_RIGHT_SEQUENCE'
                     self.action_start_time = rospy.get_time()
-                    rospy.loginfo("Mulai bergerak ke KANAN selama 2 detik.")
+                    rospy.loginfo("Mulai bergerak ke KANAN selama 3 detik.")
 
-            # --- STATE 7: BERGERAK KANAN (2 DETIK) ---
+            # --- STATE 7: BERGERAK KANAN (3 DETIK) ---
             elif self.state == 'MOVE_RIGHT_SEQUENCE':
                 self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = -1.0 # Negatif Y untuk ke kanan secara holonomic
+                self.vel_msg.linear.y = -1.0 # Kanan
                 self.vel_msg.angular.z = 0.0
                 self.cmd_pub.publish(self.vel_msg)
                 
                 if (rospy.get_time() - self.action_start_time) >= 3.0:
-                    self.state = 'ROTATE_RIGHT_SEQUENCE'
-                    self.action_start_time = rospy.get_time()
-                    rospy.loginfo("Mulai BERPUTAR ke KANAN selama 3 detik.")
+                    self.apply_brake('ROTATE_RIGHT_SEQUENCE', "Rem gerak kanan.")
 
             # --- STATE 8: BERPUTAR KANAN (3 DETIK) ---
             elif self.state == 'ROTATE_RIGHT_SEQUENCE':
                 self.vel_msg.linear.x = 0.0
                 self.vel_msg.linear.y = 0.0
-                self.vel_msg.angular.z = -0.5 # Negatif Z untuk berputar searah jarum jam (ke kanan)
+                self.vel_msg.angular.z = -0.5 # Berputar
                 self.cmd_pub.publish(self.vel_msg)
                 
                 if (rospy.get_time() - self.action_start_time) >= 3.0:
-                    self.state = 'FINISHED'
-                    rospy.loginfo("Semua manuver selesai. Robot Standby.")
+                    self.apply_brake('FINISHED', "Rem putaran selesai.")
 
             # --- STATE 9: SELESAI ---
             elif self.state == 'FINISHED':
-                self.vel_msg.linear.x = 0.0
-                self.vel_msg.linear.y = 0.0
-                self.vel_msg.angular.z = 0.0
-                self.cmd_pub.publish(self.vel_msg)
+                # Kecepatan sudah aman 0 karena melewati state BRAKING
+                pass
             
             self.rate.sleep()
 

@@ -164,10 +164,10 @@ function App() {
       </section>
 
       <section className="grid grid-cols-4 gap-[15px] mb-[30px]">
-        <SensorCard title="Kiri Belakang" value={parseFloat(telemetry.lowLevel[3]).toFixed(2)} unit="" />
-        <SensorCard title="Kiri Depan" value={parseFloat(telemetry.lowLevel[1]).toFixed(2)} unit="" />
-        <SensorCard title="Kanan Depan" value={parseFloat(telemetry.lowLevel[0]).toFixed(2)} unit="" />
-        <SensorCard title="Kanan Belakang" value={parseFloat(telemetry.lowLevel[2]).toFixed(2)} unit="" />
+        <SensorCard title="Kiri Belakang" value={parseFloat(telemetry.lowLevel[2]).toFixed(2)} unit="" />
+        <SensorCard title="Kiri Depan" value={parseFloat(telemetry.lowLevel[0]).toFixed(2)} unit="" />
+        <SensorCard title="Kanan Depan" value={parseFloat(telemetry.lowLevel[1]).toFixed(2)} unit="" />
+        <SensorCard title="Kanan Belakang" value={parseFloat(telemetry.lowLevel[3]).toFixed(2)} unit="" />
       </section>
 
       {/* Capit */}
